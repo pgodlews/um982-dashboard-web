@@ -1,0 +1,53 @@
+name: CI & Code Quality
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Validate HTML & JavaScript Syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Validate JavaScript Syntax
+        run: |
+          node -e '
+          const fs = require("fs");
+          const html = fs.readFileSync("index.html", "utf8");
+          const scriptMatches = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)];
+          if (scriptMatches.length === 0) {
+            console.error("No script blocks found in index.html");
+            process.exit(1);
+          }
+          scriptMatches.forEach((match, i) => {
+            const code = match[1].trim();
+            if (!code) return;
+            try {
+              new Function(code);
+              console.log(`✓ Script block ${i + 1} syntax is valid.`);
+            } catch (err) {
+              console.error(`✗ Syntax error in script block ${i + 1}:`, err);
+              process.exit(1);
+            }
+          });
+          '
+
+      - name: Validate Required Files & Assets
+        run: |
+          test -f index.html || (echo "Missing index.html" && exit 1)
+          test -f README.md || (echo "Missing README.md" && exit 1)
+          test -f LICENSE || (echo "Missing LICENSE" && exit 1)
+          test -f docs/screenshots/dashboard.png || (echo "Missing dashboard.png" && exit 1)
+          test -f docs/screenshots/mobile-view.png || (echo "Missing mobile-view.png" && exit 1)
+          echo "All required files and assets verified."

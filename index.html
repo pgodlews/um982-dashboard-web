@@ -1,0 +1,1584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UM982 GNSS Telemetry & Attitude Dashboard</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: rgba(16, 23, 38, 0.85);
+      --card-border: rgba(45, 62, 95, 0.5);
+      --card-hover: rgba(56, 189, 248, 0.15);
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --accent: #0ea5e9;
+      --accent-glow: rgba(14, 165, 233, 0.35);
+      --gps: #38bdf8;
+      --bds: #f59e0b;
+      --gal: #10b981;
+      --glo: #ef4444;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --rtk-fixed: #10b981;
+      --rtk-float: #06b6d4;
+      --standalone: #3b82f6;
+      --nofix: #64748b;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      background-image: 
+        radial-gradient(circle at 15% 15%, rgba(14, 165, 233, 0.08) 0%, transparent 40%),
+        radial-gradient(circle at 85% 85%, rgba(16, 185, 129, 0.06) 0%, transparent 40%),
+        linear-gradient(180deg, #070a12 0%, #0d1322 100%);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, monospace;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid var(--card-border);
+      background: rgba(11, 17, 30, 0.9);
+      backdrop-filter: blur(12px);
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .brand-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #0ea5e9, #10b981);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 1.1rem;
+      color: #041019;
+      box-shadow: 0 0 15px var(--accent-glow);
+    }
+    .brand-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      color: #ffffff;
+    }
+    .brand-sub {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      letter-spacing: 0.02em;
+    }
+
+    .header-controls {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    button {
+      background: var(--card-bg);
+      color: var(--text);
+      border: 1px solid var(--card-border);
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    button:hover:not(:disabled) {
+      border-color: var(--accent);
+      background: rgba(14, 165, 233, 0.15);
+      box-shadow: 0 0 12px var(--accent-glow);
+      transform: translateY(-1px);
+    }
+    button.primary {
+      background: linear-gradient(135deg, #0284c7, #0ea5e9);
+      border-color: #38bdf8;
+      color: #ffffff;
+    }
+    button.primary:hover:not(:disabled) {
+      background: linear-gradient(135deg, #0369a1, #0284c7);
+      box-shadow: 0 0 18px rgba(14, 165, 233, 0.5);
+    }
+    button.danger {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+    }
+    button.danger:hover:not(:disabled) {
+      background: rgba(239, 68, 68, 0.3);
+      border-color: #ef4444;
+      box-shadow: 0 0 15px rgba(239, 68, 68, 0.3);
+    }
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      transform: none !important;
+      box-shadow: none !important;
+    }
+
+    select, input[type="text"] {
+      background: rgba(15, 23, 42, 0.8);
+      color: var(--text);
+      border: 1px solid var(--card-border);
+      padding: 0.5rem 0.75rem;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      outline: none;
+    }
+    select:focus, input[type="text"]:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 8px var(--accent-glow);
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.35rem 0.85rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      background: rgba(100, 116, 139, 0.2);
+      border: 1px solid rgba(100, 116, 139, 0.4);
+      color: #94a3b8;
+    }
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .status-pill.connected {
+      background: rgba(16, 185, 129, 0.15);
+      border-color: rgba(16, 185, 129, 0.5);
+      color: #34d399;
+      box-shadow: 0 0 10px rgba(16, 185, 129, 0.2);
+    }
+    .status-pill.connected .status-dot {
+      animation: pulse-dot 1.5s infinite;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+    }
+
+    main {
+      flex: 1;
+      padding: 1.25rem;
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 1.25rem;
+      max-width: 1700px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 1.15rem;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      overflow: hidden;
+    }
+    .card::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(56, 189, 248, 0.3), transparent);
+    }
+
+    .card-title {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      font-weight: 700;
+      margin-bottom: 0.85rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* Key metric tiles */
+    .metric-grid {
+      grid-column: span 12;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+    }
+    .metric-card {
+      background: rgba(15, 23, 42, 0.65);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 1rem 1.1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+    }
+    .metric-label {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    .metric-val {
+      font-size: 1.5rem;
+      font-weight: 800;
+      color: #ffffff;
+      font-feature-settings: "tnum";
+      letter-spacing: -0.02em;
+    }
+    .metric-sub {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    /* Fix badge */
+    .fix-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.4rem 0.9rem;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+    }
+    .fix-none { background: rgba(100, 116, 139, 0.25); color: #94a3b8; border: 1px solid rgba(100, 116, 139, 0.4); }
+    .fix-single { background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.5); }
+    .fix-dgps { background: rgba(20, 184, 166, 0.2); color: #2dd4bf; border: 1px solid rgba(20, 184, 166, 0.5); }
+    .fix-float { background: rgba(6, 182, 212, 0.2); color: #22d3ee; border: 1px solid rgba(6, 182, 212, 0.5); }
+    .fix-rtk { background: rgba(16, 185, 129, 0.25); color: #34d399; border: 1px solid #10b981; box-shadow: 0 0 15px rgba(16, 185, 129, 0.3); }
+
+    /* Middle columns: Skyplot, Heading Compass, Satellite Table */
+    .col-skyplot {
+      grid-column: span 4;
+      min-height: 380px;
+    }
+    .col-compass {
+      grid-column: span 4;
+      min-height: 380px;
+    }
+    .col-coords {
+      grid-column: span 4;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .canvas-container {
+      position: relative;
+      width: 100%;
+      height: 300px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    canvas {
+      display: block;
+      max-width: 100%;
+      max-height: 100%;
+    }
+
+    /* Satellite Spectrum Bars */
+    .col-satellites {
+      grid-column: span 8;
+      min-height: 320px;
+    }
+    .col-terminal {
+      grid-column: span 4;
+      min-height: 320px;
+    }
+
+    .legend {
+      display: flex;
+      gap: 0.85rem;
+      font-size: 0.72rem;
+      font-weight: 600;
+      flex-wrap: wrap;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .legend-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+    }
+
+    /* Coordinate Card Details */
+    .coord-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.5rem 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      font-size: 0.85rem;
+    }
+    .coord-row:last-child { border-bottom: none; }
+    .coord-label { color: var(--text-muted); }
+    .coord-val { font-weight: 700; font-feature-settings: "tnum"; color: #ffffff; }
+    .blurred-position {
+      filter: blur(8px);
+      user-select: none;
+      transition: filter 0.2s ease;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 4px;
+      padding: 0 4px;
+    }
+    .blurred-terminal {
+      filter: blur(8px);
+      user-select: none;
+      transition: filter 0.2s ease;
+    }
+
+    /* Terminal Console */
+    .terminal-box {
+      flex: 1;
+      background: #050810;
+      border: 1px solid rgba(45, 62, 95, 0.6);
+      border-radius: 8px;
+      padding: 0.65rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.72rem;
+      color: #38bdf8;
+      overflow-y: auto;
+      height: 200px;
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      line-height: 1.4;
+    }
+    .terminal-line { word-break: break-all; }
+    .terminal-line.sent { color: #f59e0b; }
+    .terminal-line.err { color: #ef4444; }
+    .terminal-line.ok { color: #10b981; }
+
+    .terminal-controls {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+
+    /* Responsive */
+    @media (max-width: 1200px) {
+      .col-skyplot { grid-column: span 6; }
+      .col-compass { grid-column: span 6; }
+      .col-coords { grid-column: span 12; }
+      .col-satellites { grid-column: span 12; }
+      .col-terminal { grid-column: span 12; }
+    }
+    @media (max-width: 768px) {
+      .col-skyplot { grid-column: span 12; }
+      .col-compass { grid-column: span 12; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <div class="brand-icon">🛰️</div>
+      <div>
+        <div class="brand-title">UM982 GNSS TELEMETRY</div>
+        <div class="brand-sub">Dual-Antenna RTK & Attitude Instrument</div>
+      </div>
+    </div>
+
+    <div class="header-controls">
+      <select id="baudSelect">
+        <option value="115200" selected>115,200 Baud (Default)</option>
+        <option value="230400">230,400 Baud</option>
+        <option value="460800">460,800 Baud</option>
+        <option value="9600">9,600 Baud</option>
+      </select>
+
+      <button id="connectBtn" class="primary">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        Connect Serial
+      </button>
+      <button id="disconnectBtn" class="danger" disabled>Disconnect</button>
+      <button id="demoBtn" style="background: rgba(14, 165, 233, 0.15); border-color: rgba(14, 165, 233, 0.4); color: #38bdf8;">Demo Mode</button>
+
+      <div id="statusPill" class="status-pill">
+        <div class="status-dot"></div>
+        <span id="statusText">Disconnected</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- TOP KPI METRIC TILES -->
+    <div class="metric-grid">
+      <div class="metric-card">
+        <div class="metric-label">Position Solution</div>
+        <div id="fixBadge" class="fix-badge fix-none">NO FIX</div>
+        <div class="metric-sub" id="fixSub">Waiting for satellite data...</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-label">Satellites Tracked / Used</div>
+        <div class="metric-val" id="satMetric">0 / 0</div>
+        <div class="metric-sub" id="satMetricSub">GPS: 0 | BDS: 0 | GAL: 0 | GLO: 0</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-label">Dual-Antenna Heading</div>
+        <div class="metric-val" id="headingMetric">---°</div>
+        <div class="metric-sub" id="headingMetricSub">Status: INSUFFICIENT_OBS</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-label">Precision (HDOP / Sigma)</div>
+        <div class="metric-val" id="hdopMetric">---</div>
+        <div class="metric-sub" id="sigmaSub">H-Sigma: --- | V-Sigma: ---</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-label">UTC Time & Date</div>
+        <div class="metric-val" id="utcMetric">--:--:--</div>
+        <div class="metric-sub" id="dateMetric">Waiting for GPS lock...</div>
+      </div>
+    </div>
+
+    <!-- SKYPLOT -->
+    <div class="card col-skyplot">
+      <div class="card-title">
+        <span>Polar Skyplot (Azimuth / Elevation)</span>
+        <div style="display:flex; align-items:center; gap:0.5rem;">
+          <button id="clearTrailsBtn" style="padding:0.15rem 0.45rem; font-size:0.68rem;">Clear Trails</button>
+          <div class="legend">
+            <div class="legend-item"><div class="legend-dot" style="background:var(--gps)"></div>GPS</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--bds)"></div>BeiDou</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--gal)"></div>Galileo</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--glo)"></div>GLONASS</div>
+          </div>
+        </div>
+      </div>
+      <div class="canvas-container">
+        <canvas id="skyplotCanvas" width="300" height="300"></canvas>
+      </div>
+    </div>
+
+    <!-- DUAL ANTENNA COMPASS INSTRUMENT -->
+    <div class="card col-compass">
+      <div class="card-title">
+        <span>Attitude & Heading Instrument</span>
+        <span id="headingPill" style="font-size:0.75rem; color:var(--text-muted)">Baseline: --- m</span>
+      </div>
+      <div class="canvas-container">
+        <canvas id="compassCanvas" width="300" height="300"></canvas>
+      </div>
+    </div>
+
+    <!-- COORDINATES & HARDWARE TELEMETRY -->
+    <div class="card col-coords">
+      <div class="card-title">
+        <span>Geodetic Position</span>
+        <button id="privacyBtn" style="padding:0.18rem 0.55rem; font-size:0.7rem; background:rgba(255, 255, 255, 0.05); border-color:var(--border); color:var(--text-muted);">
+          🔒 Privacy Mode
+        </button>
+      </div>
+      
+      <div class="coord-row">
+        <span class="coord-label">Latitude</span>
+        <span class="coord-val" id="valLat">---.--------°</span>
+      </div>
+      <div class="coord-row">
+        <span class="coord-label">Longitude</span>
+        <span class="coord-val" id="valLon">---.--------°</span>
+      </div>
+      <div class="coord-row">
+        <span class="coord-label">MSL Altitude</span>
+        <span class="coord-val" id="valAltMsl">--- m</span>
+      </div>
+      <div class="coord-row">
+        <span class="coord-label">Geoid Separation</span>
+        <span class="coord-val" id="valGeoid">--- m</span>
+      </div>
+      <div class="coord-row">
+        <span class="coord-label">Ellipsoidal Height</span>
+        <span class="coord-val" id="valAltEllip">--- m</span>
+      </div>
+      <div class="coord-row">
+        <span class="coord-label">Speed / Course</span>
+        <span class="coord-val" id="valSpeedCourse">0.00 kn / 0.0°</span>
+      </div>
+      <div class="coord-row">
+        <span class="coord-label">Hardware Info</span>
+        <span class="coord-val" id="valHw" style="font-size:0.75rem; color:var(--accent)">Unicore UM982</span>
+      </div>
+
+      <div style="margin-top:auto; padding-top:0.5rem; display:flex; gap:0.5rem;">
+        <button id="mapsBtn" style="flex:1; justify-content:center;" disabled>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+          Open in Maps
+        </button>
+        <button id="copyPosBtn" style="flex:1; justify-content:center;" disabled>Copy Coords</button>
+      </div>
+    </div>
+
+    <!-- SATELLITE SNR SPECTRUM -->
+    <div class="card col-satellites">
+      <div class="card-title">
+        <span>Satellite Signal Strength (C/N0 dB-Hz)</span>
+        <span id="activeSatsCount" style="font-size:0.75rem; color:var(--accent)">0 Satellites Active</span>
+      </div>
+      <div class="canvas-container" style="height: 240px;">
+        <canvas id="snrCanvas" width="800" height="240"></canvas>
+      </div>
+    </div>
+
+    <!-- COMMAND TERMINAL & LOGS -->
+    <div class="card col-terminal">
+      <div class="card-title">
+        <span>Serial Terminal</span>
+        <button id="clearTermBtn" style="padding:0.2rem 0.5rem; font-size:0.7rem;">Clear</button>
+      </div>
+      <div id="terminal" class="terminal-box"></div>
+      <div class="terminal-controls">
+        <input type="text" id="cmdInput" placeholder="Command (e.g. VERSION, CONFIG)" style="flex:1;">
+        <button id="sendCmdBtn" disabled>Send</button>
+      </div>
+      <div style="display:flex; gap:0.35rem; margin-top:0.5rem; flex-wrap:wrap;">
+        <button class="quick-cmd" data-cmd="VERSION" style="padding:0.2rem 0.5rem; font-size:0.7rem;">VERSION</button>
+        <button class="quick-cmd" data-cmd="CONFIG" style="padding:0.2rem 0.5rem; font-size:0.7rem;">CONFIG</button>
+        <button class="quick-cmd" data-cmd="LOG ANTENNAA ONCE" style="padding:0.2rem 0.5rem; font-size:0.7rem;">ANTENNA</button>
+        <button class="quick-cmd" data-cmd="LOG HEADINGA ONTIME 0.2" style="padding:0.2rem 0.5rem; font-size:0.7rem;">HEADING 5Hz</button>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    // --- STATE MANAGEMENT ---
+    let port = null;
+    let reader = null;
+    let writer = null;
+    let keepReading = false;
+    let rawBuffer = "";
+
+    const gnssState = {
+      fixQuality: 0,
+      fixLabel: "NO FIX",
+      lat: null,
+      lon: null,
+      altMsl: null,
+      geoidSep: null,
+      altEllipsoid: null,
+      hdop: null,
+      numSatsUsed: 0,
+      speedKnots: 0,
+      courseDeg: 0,
+      utcTime: null,
+      utcDate: null,
+      headingDeg: null,
+      pitchDeg: null,
+      headingStdDev: null,
+      baselineM: null,
+      headingStatus: "NO_HEADING",
+      sigmaLat: null,
+      sigmaLon: null,
+      sigmaAlt: null,
+      hwVersion: null,
+      // Map of key: 'SYS_PRN' -> { sys, prn, elev, az, snr, updated }
+      satellites: new Map()
+    };
+
+    // --- DOM ELEMENTS ---
+    const connectBtn = document.getElementById("connectBtn");
+    const disconnectBtn = document.getElementById("disconnectBtn");
+    const baudSelect = document.getElementById("baudSelect");
+    const statusPill = document.getElementById("statusPill");
+    const statusText = document.getElementById("statusText");
+    const terminal = document.getElementById("terminal");
+    const cmdInput = document.getElementById("cmdInput");
+    const sendCmdBtn = document.getElementById("sendCmdBtn");
+    const clearTermBtn = document.getElementById("clearTermBtn");
+    const mapsBtn = document.getElementById("mapsBtn");
+    const copyPosBtn = document.getElementById("copyPosBtn");
+
+    const fixBadge = document.getElementById("fixBadge");
+    const fixSub = document.getElementById("fixSub");
+    const satMetric = document.getElementById("satMetric");
+    const satMetricSub = document.getElementById("satMetricSub");
+    const headingMetric = document.getElementById("headingMetric");
+    const headingMetricSub = document.getElementById("headingMetricSub");
+    const hdopMetric = document.getElementById("hdopMetric");
+    const sigmaSub = document.getElementById("sigmaSub");
+    const utcMetric = document.getElementById("utcMetric");
+    const dateMetric = document.getElementById("dateMetric");
+    const valLat = document.getElementById("valLat");
+    const valLon = document.getElementById("valLon");
+    const valAltMsl = document.getElementById("valAltMsl");
+    const valGeoid = document.getElementById("valGeoid");
+    const valAltEllip = document.getElementById("valAltEllip");
+    const valSpeedCourse = document.getElementById("valSpeedCourse");
+    const valHw = document.getElementById("valHw");
+    const headingPill = document.getElementById("headingPill");
+    const activeSatsCount = document.getElementById("activeSatsCount");
+
+    const skyplotCanvas = document.getElementById("skyplotCanvas");
+    const compassCanvas = document.getElementById("compassCanvas");
+    const snrCanvas = document.getElementById("snrCanvas");
+
+    // Check Web Serial API support
+    if (!("serial" in navigator)) {
+      alert("Web Serial API is not supported in this browser. Please open this page in Google Chrome (version 89+) or Microsoft Edge.");
+      connectBtn.disabled = true;
+    }
+
+    // --- SERIAL CONNECTION ---
+    connectBtn.addEventListener("click", async () => {
+      try {
+        port = await navigator.serial.requestPort();
+        const baudRate = parseInt(baudSelect.value, 10);
+        await port.open({ baudRate });
+
+        keepReading = true;
+        connectBtn.disabled = true;
+        baudSelect.disabled = true;
+        disconnectBtn.disabled = false;
+        sendCmdBtn.disabled = false;
+        statusPill.classList.add("connected");
+        statusText.textContent = `Connected (${baudRate} baud)`;
+
+        logTerminal(`[INFO] Port opened successfully at ${baudRate} baud 8N1`, "ok");
+
+        const textEncoder = new TextEncoderStream();
+        const writableStreamClosed = textEncoder.readable.pipeTo(port.writable);
+        writer = textEncoder.writable.getWriter();
+
+        readSerialLoop();
+      } catch (err) {
+        console.error(err);
+        logTerminal(`[ERROR] Connection failed: ${err.message}`, "err");
+      }
+    });
+
+    disconnectBtn.addEventListener("click", async () => {
+      await disconnectSerial();
+    });
+
+    async function disconnectSerial() {
+      keepReading = false;
+      if (reader) {
+        try { await reader.cancel(); } catch (e) {}
+      }
+      if (writer) {
+        try { await writer.close(); } catch (e) {}
+      }
+      if (port) {
+        try { await port.close(); } catch (e) {}
+      }
+      port = null;
+      reader = null;
+      writer = null;
+
+      connectBtn.disabled = false;
+      baudSelect.disabled = false;
+      disconnectBtn.disabled = true;
+      sendCmdBtn.disabled = true;
+      statusPill.classList.remove("connected");
+      statusText.textContent = "Disconnected";
+      logTerminal("[INFO] Serial connection closed.", "sent");
+    }
+
+    async function readSerialLoop() {
+      const textDecoder = new TextDecoderStream();
+      const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
+      reader = textDecoder.readable.getReader();
+
+      try {
+        while (keepReading) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          if (value) {
+            handleRawSerialData(value);
+          }
+        }
+      } catch (err) {
+        if (keepReading) {
+          logTerminal(`[ERROR] Read error: ${err.message}`, "err");
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    }
+
+    function handleRawSerialData(chunk) {
+      rawBuffer += chunk;
+      let newlineIdx;
+      while ((newlineIdx = rawBuffer.indexOf("\n")) >= 0) {
+        const line = rawBuffer.slice(0, newlineIdx).trim();
+        rawBuffer = rawBuffer.slice(newlineIdx + 1);
+        if (line) {
+          parseSentence(line);
+        }
+      }
+    }
+
+    // --- TERMINAL LOGGING ---
+    function logTerminal(msg, type = "") {
+      const div = document.createElement("div");
+      div.className = `terminal-line ${type}`;
+      div.textContent = msg;
+      terminal.appendChild(div);
+      if (terminal.childNodes.length > 200) {
+        terminal.removeChild(terminal.firstChild);
+      }
+      terminal.scrollTop = terminal.scrollHeight;
+    }
+
+    clearTermBtn.addEventListener("click", () => {
+      terminal.innerHTML = "";
+    });
+
+    // Send Commands
+    async function sendCommand(cmd) {
+      if (!writer) return;
+      try {
+        const cleanCmd = cmd.trim();
+        await writer.write(cleanCmd + "\r\n");
+        logTerminal(`> ${cleanCmd}`, "sent");
+      } catch (err) {
+        logTerminal(`[ERROR] Send failed: ${err.message}`, "err");
+      }
+    }
+
+    sendCmdBtn.addEventListener("click", () => {
+      const cmd = cmdInput.value;
+      if (cmd) {
+        sendCommand(cmd);
+        cmdInput.value = "";
+      }
+    });
+
+    cmdInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        sendCmdBtn.click();
+      }
+    });
+
+    document.querySelectorAll(".quick-cmd").forEach(btn => {
+      btn.addEventListener("click", () => {
+        sendCommand(btn.getAttribute("data-cmd"));
+      });
+    });
+
+    // --- NMEA & UNICORE PARSER ---
+    function parseSentence(line) {
+      // Checksum validation & logging
+      if (line.startsWith("$command,") || line.startsWith("$CONFIG,")) {
+        logTerminal(line, "ok");
+        if (line.includes("response: OK")) {
+          // command success
+        }
+        return;
+      }
+
+      if (line.startsWith("#VERSION")) {
+        logTerminal(line, "ok");
+        const parts = line.split(";")[1];
+        if (parts) {
+          gnssState.hwVersion = parts.replace(/"/g, "").split(",").slice(0, 3).join(" | ");
+          valHw.textContent = gnssState.hwVersion;
+        }
+        return;
+      }
+
+      if (line.startsWith("#ANTENNAA")) {
+        logTerminal(line);
+        return;
+      }
+
+      // Attitude & Heading
+      if (line.startsWith("#HEADINGA") || line.startsWith("#UNIHEADINGA")) {
+        parseHeading(line);
+        return;
+      }
+
+      if (!line.startsWith("$")) return;
+
+      const starIdx = line.indexOf("*");
+      const body = (starIdx >= 0) ? line.slice(1, starIdx) : line.slice(1);
+      const parts = body.split(",");
+      const type = parts[0];
+
+      if (type.endsWith("GGA")) {
+        parseGGA(parts);
+      } else if (type.endsWith("RMC")) {
+        parseRMC(parts);
+      } else if (type.endsWith("GSV")) {
+        parseGSV(parts);
+      } else if (type.endsWith("GST")) {
+        parseGST(parts);
+      }
+
+      // Log only subset of NMEA lines to terminal to prevent freezing
+      if (type.endsWith("GGA") || type.endsWith("RMC")) {
+        logTerminal(line);
+      }
+    }
+
+    function parseGGA(p) {
+      if (p.length < 15) return;
+      const utc = p[1];
+      const latStr = p[2], latDir = p[3];
+      const lonStr = p[4], lonDir = p[5];
+      const qual = parseInt(p[6], 10) || 0;
+      const numSats = parseInt(p[7], 10) || 0;
+      const hdop = parseFloat(p[8]);
+      const alt = parseFloat(p[9]);
+      const geoid = parseFloat(p[11]);
+
+      gnssState.fixQuality = qual;
+      gnssState.numSatsUsed = numSats;
+      gnssState.hdop = isNaN(hdop) ? null : hdop;
+      gnssState.altMsl = isNaN(alt) ? null : alt;
+      gnssState.geoidSep = isNaN(geoid) ? null : geoid;
+      if (gnssState.altMsl !== null && gnssState.geoidSep !== null) {
+        gnssState.altEllipsoid = gnssState.altMsl + gnssState.geoidSep;
+      }
+
+      if (latStr && lonStr) {
+        gnssState.lat = parseNmeaCoord(latStr, latDir, 2);
+        gnssState.lon = parseNmeaCoord(lonStr, lonDir, 3);
+      }
+
+      if (utc && utc.length >= 6) {
+        const hh = utc.slice(0, 2), mm = utc.slice(2, 4), ss = utc.slice(4, 6);
+        gnssState.utcTime = `${hh}:${mm}:${ss} UTC`;
+      }
+
+      updateUI();
+    }
+
+    function parseRMC(p) {
+      if (p.length < 10) return;
+      const status = p[2];
+      const spd = parseFloat(p[7]);
+      const crs = parseFloat(p[8]);
+      const dateStr = p[9];
+
+      gnssState.speedKnots = isNaN(spd) ? 0 : spd;
+      gnssState.courseDeg = isNaN(crs) ? 0 : crs;
+
+      if (dateStr && dateStr.length === 6) {
+        const dd = dateStr.slice(0, 2), mm = dateStr.slice(2, 4), yy = dateStr.slice(4, 6);
+        gnssState.utcDate = `20${yy}-${mm}-${dd}`;
+      }
+
+      updateUI();
+    }
+
+    function parseGST(p) {
+      if (p.length < 9) return;
+      const sLat = parseFloat(p[6]);
+      const sLon = parseFloat(p[7]);
+      const sAlt = parseFloat(p[8]);
+      gnssState.sigmaLat = isNaN(sLat) ? null : sLat;
+      gnssState.sigmaLon = isNaN(sLon) ? null : sLon;
+      gnssState.sigmaAlt = isNaN(sAlt) ? null : sAlt;
+      updateUI();
+    }
+
+    function parseGSV(p) {
+      // $GxGSV,total,msg_num,total_sats,prn,elev,az,snr,...
+      const talker = p[0].slice(0, 2);
+      let sys = "GPS";
+      if (talker === "GB" || talker === "BD") sys = "BDS";
+      else if (talker === "GA") sys = "GAL";
+      else if (talker === "GL") sys = "GLO";
+
+      const now = Date.now();
+      for (let i = 4; i < p.length - 3; i += 4) {
+        const prn = p[i];
+        const elev = parseFloat(p[i + 1]);
+        const az = parseFloat(p[i + 2]);
+        const snr = parseFloat(p[i + 3]);
+        if (prn) {
+          const key = `${sys}_${prn}`;
+          const validElev = !isNaN(elev) && elev > 0;
+          const validAz = !isNaN(az);
+          let satRecord = gnssState.satellites.get(key);
+
+          if (!satRecord) {
+            satRecord = {
+              sys,
+              prn,
+              elev: validElev ? elev : 0,
+              az: validAz ? az : 0,
+              snr: isNaN(snr) ? 0 : snr,
+              updated: now,
+              trail: []
+            };
+            if (validElev && validAz) {
+              satRecord.trail.push({ az, elev, time: now });
+            }
+            gnssState.satellites.set(key, satRecord);
+          } else {
+            satRecord.sys = sys;
+            satRecord.prn = prn;
+            if (validElev) satRecord.elev = elev;
+            if (validAz) satRecord.az = az;
+            satRecord.snr = isNaN(snr) ? 0 : snr;
+            satRecord.updated = now;
+            if (!satRecord.trail) satRecord.trail = [];
+
+            if (validElev && validAz) {
+              const lastPt = satRecord.trail[satRecord.trail.length - 1];
+              // Record orbital track if satellite moved >= 0.15 deg or every 5 seconds
+              if (!lastPt || Math.hypot(lastPt.az - satRecord.az, lastPt.elev - satRecord.elev) >= 0.15 || (now - lastPt.time > 5000)) {
+                satRecord.trail.push({ az: satRecord.az, elev: satRecord.elev, time: now });
+                if (satRecord.trail.length > 300) {
+                  satRecord.trail.shift();
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Purge satellites not updated in 30 seconds
+      for (const [k, v] of gnssState.satellites.entries()) {
+        if (now - v.updated > 30000) {
+          gnssState.satellites.delete(k);
+        }
+      }
+      updateUI();
+    }
+
+    function parseHeading(line) {
+      // #HEADINGA,header;sol_status,pos_type,length,heading,pitch,...
+      const starIdx = line.indexOf("*");
+      const clean = starIdx >= 0 ? line.slice(0, starIdx) : line;
+      const parts = clean.split(";");
+      if (parts.length < 2) return;
+
+      const data = parts[1].split(",");
+      if (data.length >= 8) {
+        gnssState.headingStatus = `${data[0]} (${data[1]})`;
+        const len = parseFloat(data[2]);
+        const hdg = parseFloat(data[3]);
+        const ptch = parseFloat(data[4]);
+        const hdgStd = parseFloat(data[6]);
+
+        gnssState.baselineM = isNaN(len) ? null : len;
+        gnssState.headingDeg = isNaN(hdg) ? null : hdg;
+        gnssState.pitchDeg = isNaN(ptch) ? null : ptch;
+        gnssState.headingStdDev = isNaN(hdgStd) ? null : hdgStd;
+        updateUI();
+      }
+    }
+
+    function parseNmeaCoord(val, dir, degLen) {
+      if (!val) return null;
+      const deg = parseFloat(val.slice(0, degLen));
+      const min = parseFloat(val.slice(degLen));
+      if (isNaN(deg) || isNaN(min)) return null;
+      let dec = deg + (min / 60.0);
+      if (dir === "S" || dir === "W") dec = -dec;
+      return dec;
+    }
+
+    // --- UI UPDATER ---
+    const FIX_LABELS = {
+      0: { name: "NO FIX", cls: "fix-none", sub: "Searching satellites..." },
+      1: { name: "STANDALONE 3D", cls: "fix-single", sub: "Autonomous Single Point" },
+      2: { name: "DGPS", cls: "fix-dgps", sub: "Differential GPS" },
+      4: { name: "RTK FIXED", cls: "fix-rtk", sub: "Carrier Phase Integer Fix (~1cm)" },
+      5: { name: "RTK FLOAT", cls: "fix-float", sub: "Carrier Phase Float Solution" },
+      6: { name: "DEAD RECKONING", cls: "fix-single", sub: "Inertial Integration" }
+    };
+
+    function updateUI() {
+      // 1. Fix badge
+      const fixInfo = FIX_LABELS[gnssState.fixQuality] || FIX_LABELS[0];
+      fixBadge.className = `fix-badge ${fixInfo.cls}`;
+      fixBadge.textContent = fixInfo.name;
+      fixSub.textContent = fixInfo.sub;
+
+      // 2. Satellites
+      const sats = Array.from(gnssState.satellites.values());
+      satMetric.textContent = `${gnssState.numSatsUsed} / ${sats.length}`;
+      activeSatsCount.textContent = `${sats.length} Satellites Tracked`;
+
+      const counts = { GPS: 0, BDS: 0, GAL: 0, GLO: 0 };
+      sats.forEach(s => { if (counts[s.sys] !== undefined) counts[s.sys]++; });
+      satMetricSub.textContent = `GPS: ${counts.GPS} | BDS: ${counts.BDS} | GAL: ${counts.GAL} | GLO: ${counts.GLO}`;
+
+      // 3. Heading
+      if (gnssState.headingDeg !== null) {
+        headingMetric.textContent = `${gnssState.headingDeg.toFixed(1)}°`;
+        const std = gnssState.headingStdDev !== null ? `±${gnssState.headingStdDev.toFixed(1)}°` : "";
+        headingMetricSub.textContent = `${gnssState.headingStatus} ${std}`;
+        headingPill.textContent = `Baseline: ${gnssState.baselineM !== null ? gnssState.baselineM.toFixed(2) + " m" : "---"}`;
+      } else {
+        headingMetric.textContent = "---°";
+        headingMetricSub.textContent = gnssState.headingStatus;
+      }
+
+      // 4. Precision
+      hdopMetric.textContent = gnssState.hdop !== null ? gnssState.hdop.toFixed(2) : "---";
+      if (gnssState.sigmaLat !== null && gnssState.sigmaLon !== null) {
+        const hSigma = Math.hypot(gnssState.sigmaLat, gnssState.sigmaLon);
+        sigmaSub.textContent = `H-Sigma: ${hSigma.toFixed(3)} m | V-Sigma: ${gnssState.sigmaAlt !== null ? gnssState.sigmaAlt.toFixed(3) + " m" : "---"}`;
+      } else {
+        sigmaSub.textContent = "H-Sigma: --- | V-Sigma: ---";
+      }
+
+      // 5. Time
+      if (gnssState.utcTime) utcMetric.textContent = gnssState.utcTime;
+      if (gnssState.utcDate) dateMetric.textContent = gnssState.utcDate;
+
+      // 6. Coordinates
+      if (gnssState.lat !== null && gnssState.lon !== null) {
+        valLat.textContent = `${gnssState.lat.toFixed(8)}° ${gnssState.lat >= 0 ? "N" : "S"}`;
+        valLon.textContent = `${Math.abs(gnssState.lon).toFixed(8)}° ${gnssState.lon >= 0 ? "E" : "W"}`;
+        mapsBtn.disabled = false;
+        copyPosBtn.disabled = false;
+      } else {
+        valLat.textContent = "---.--------°";
+        valLon.textContent = "---.--------°";
+        mapsBtn.disabled = true;
+        copyPosBtn.disabled = true;
+      }
+
+      valAltMsl.textContent = gnssState.altMsl !== null ? `${gnssState.altMsl.toFixed(2)} m` : "--- m";
+      valGeoid.textContent = gnssState.geoidSep !== null ? `${gnssState.geoidSep.toFixed(2)} m` : "--- m";
+      valAltEllip.textContent = gnssState.altEllipsoid !== null ? `${gnssState.altEllipsoid.toFixed(2)} m` : "--- m";
+
+      const spdKmh = (gnssState.speedKnots * 1.852).toFixed(1);
+      valSpeedCourse.textContent = `${gnssState.speedKnots.toFixed(1)} kn (${spdKmh} km/h) / ${gnssState.courseDeg.toFixed(1)}°`;
+
+      // Render Visualizations
+      drawSkyplot();
+      drawCompass();
+      drawSNRChart();
+    }
+
+    // Maps & Clipboard
+    mapsBtn.addEventListener("click", () => {
+      if (gnssState.lat !== null && gnssState.lon !== null) {
+        window.open(`https://www.google.com/maps?q=${gnssState.lat},${gnssState.lon}`, "_blank");
+      }
+    });
+
+    copyPosBtn.addEventListener("click", () => {
+      if (gnssState.lat !== null && gnssState.lon !== null) {
+        const text = `${gnssState.lat.toFixed(8)}, ${gnssState.lon.toFixed(8)}`;
+        navigator.clipboard.writeText(text);
+        copyPosBtn.textContent = "Copied!";
+        setTimeout(() => { copyPosBtn.textContent = "Copy Coords"; }, 1500);
+      }
+    });
+
+    // --- CANVAS 1: POLAR SKYPLOT ---
+    function drawSkyplot() {
+      const ctx = skyplotCanvas.getContext("2d");
+      const w = skyplotCanvas.width, h = skyplotCanvas.height;
+      const cx = w / 2, cy = h / 2;
+      const r = Math.min(cx, cy) - 24;
+
+      ctx.clearRect(0, 0, w, h);
+
+      // Rings for 0°, 30°, 60° elevation
+      const rings = [0, 30, 60];
+      ctx.lineWidth = 1;
+      rings.forEach(elev => {
+        const ringR = r * Math.cos(elev * Math.PI / 180);
+        ctx.strokeStyle = "rgba(45, 62, 95, 0.6)";
+        ctx.beginPath();
+        ctx.arc(cx, cy, ringR, 0, 2 * Math.PI);
+        ctx.stroke();
+
+        ctx.fillStyle = "rgba(148, 163, 184, 0.5)";
+        ctx.font = "9px monospace";
+        ctx.fillText(`${elev}°`, cx + 3, cy - ringR + 10);
+      });
+
+      // Crosshairs
+      ctx.strokeStyle = "rgba(45, 62, 95, 0.4)";
+      ctx.beginPath();
+      ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy);
+      ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy + r);
+      ctx.stroke();
+
+      // Cardinal Labels
+      ctx.fillStyle = "#38bdf8";
+      ctx.font = "bold 11px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("N", cx, cy - r - 12);
+      ctx.fillText("S", cx, cy + r + 12);
+      ctx.fillText("E", cx + r + 12, cy);
+      ctx.fillText("W", cx - r - 12, cy);
+
+      // Plot Satellites and Orbital Trails
+      const sats = Array.from(gnssState.satellites.values());
+
+      // 1. Draw Dotted Historical Trails behind satellites (same constellation color)
+      sats.forEach(sat => {
+        if (!sat.trail || sat.trail.length < 2) return;
+
+        let color = "#38bdf8";
+        if (sat.sys === "BDS") color = "#f59e0b";
+        else if (sat.sys === "GAL") color = "#10b981";
+        else if (sat.sys === "GLO") color = "#ef4444";
+
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color;
+        ctx.lineWidth = 1.75;
+        ctx.setLineDash([2, 5]); // Dotted trail path
+
+        ctx.beginPath();
+        let first = true;
+        sat.trail.forEach(pt => {
+          const elevRad = pt.elev * Math.PI / 180;
+          const azRad = (pt.az - 90) * Math.PI / 180;
+          const dist = r * Math.cos(elevRad);
+          const px = cx + dist * Math.cos(azRad);
+          const py = cy + dist * Math.sin(azRad);
+
+          if (first) {
+            ctx.moveTo(px, py);
+            first = false;
+          } else {
+            ctx.lineTo(px, py);
+          }
+        });
+        ctx.stroke();
+
+        // Draw dotted beads along the historical trajectory with gradient fading opacity
+        ctx.setLineDash([]);
+        sat.trail.forEach((pt, idx) => {
+          if (idx < sat.trail.length - 1) {
+            const elevRad = pt.elev * Math.PI / 180;
+            const azRad = (pt.az - 90) * Math.PI / 180;
+            const dist = r * Math.cos(elevRad);
+            const px = cx + dist * Math.cos(azRad);
+            const py = cy + dist * Math.sin(azRad);
+
+            // Progressive opacity from 0.2 (oldest) to 0.85 (newest)
+            const alpha = 0.2 + 0.65 * (idx / sat.trail.length);
+            ctx.globalAlpha = alpha;
+            ctx.beginPath();
+            ctx.arc(px, py, 2.0, 0, 2 * Math.PI);
+            ctx.fill();
+          }
+        });
+        ctx.restore();
+      });
+
+      // 2. Draw Current Satellite Heads
+      sats.forEach(sat => {
+        if (sat.elev <= 0) return;
+        const elevRad = sat.elev * Math.PI / 180;
+        const azRad = (sat.az - 90) * Math.PI / 180; // 0 deg is North (top)
+        const dist = r * Math.cos(elevRad);
+        const x = cx + dist * Math.cos(azRad);
+        const y = cy + dist * Math.sin(azRad);
+
+        // Color by Constellation
+        let color = "#38bdf8";
+        if (sat.sys === "BDS") color = "#f59e0b";
+        else if (sat.sys === "GAL") color = "#10b981";
+        else if (sat.sys === "GLO") color = "#ef4444";
+
+        // Glow halo if strong SNR
+        if (sat.snr > 30) {
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1;
+          ctx.globalAlpha = 0.4;
+          ctx.beginPath();
+          ctx.arc(x, y, 9, 0, 2 * Math.PI);
+          ctx.stroke();
+          ctx.globalAlpha = 1.0;
+        }
+
+        // Current Satellite Dot
+        ctx.fillStyle = color;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = sat.snr > 30 ? 8 : 2;
+        ctx.beginPath();
+        ctx.arc(x, y, 5.5, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        // PRN label
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "9px monospace";
+        ctx.fillText(sat.prn, x, y - 11);
+      });
+    }
+
+    // --- CANVAS 2: ATTITUDE & HEADING COMPASS ---
+    function drawCompass() {
+      const ctx = compassCanvas.getContext("2d");
+      const w = compassCanvas.width, h = compassCanvas.height;
+      const cx = w / 2, cy = h / 2;
+      const r = Math.min(cx, cy) - 26;
+
+      ctx.clearRect(0, 0, w, h);
+
+      // Outer bezel ring
+      ctx.strokeStyle = "rgba(45, 62, 95, 0.7)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+      ctx.stroke();
+
+      // Degree tick marks
+      for (let i = 0; i < 360; i += 10) {
+        const rad = (i - 90) * Math.PI / 180;
+        const len = (i % 30 === 0) ? 10 : 5;
+        const x1 = cx + (r - len) * Math.cos(rad);
+        const y1 = cy + (r - len) * Math.sin(rad);
+        const x2 = cx + r * Math.cos(rad);
+        const y2 = cy + r * Math.sin(rad);
+
+        ctx.strokeStyle = (i % 90 === 0) ? "#38bdf8" : "rgba(148, 163, 184, 0.4)";
+        ctx.lineWidth = (i % 30 === 0) ? 1.5 : 1;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
+        ctx.stroke();
+      }
+
+      // Compass Heading Needle
+      const heading = gnssState.headingDeg !== null ? gnssState.headingDeg : 0;
+      const hdgRad = (heading - 90) * Math.PI / 180;
+
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(hdgRad + Math.PI / 2);
+
+      // North Needle (Cyan/Accent)
+      ctx.fillStyle = "#0ea5e9";
+      ctx.beginPath();
+      ctx.moveTo(0, -r + 14);
+      ctx.lineTo(8, -8);
+      ctx.lineTo(-8, -8);
+      ctx.closePath();
+      ctx.fill();
+
+      // South Needle (Muted Slate)
+      ctx.fillStyle = "#475569";
+      ctx.beginPath();
+      ctx.moveTo(0, r - 14);
+      ctx.lineTo(8, 8);
+      ctx.lineTo(-8, 8);
+      ctx.closePath();
+      ctx.fill();
+
+      // Centre Hub
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(0, 0, 5, 0, 2 * Math.PI);
+      ctx.fill();
+
+      ctx.restore();
+
+      // Digital readout in center
+      ctx.fillStyle = gnssState.headingDeg !== null ? "#38bdf8" : "#64748b";
+      ctx.font = "bold 16px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(gnssState.headingDeg !== null ? `${heading.toFixed(1)}°` : "NO HEADING", cx, cy + 32);
+
+      // Pitch indicator if available
+      if (gnssState.pitchDeg !== null) {
+        ctx.font = "10px monospace";
+        ctx.fillStyle = "rgba(148, 163, 184, 0.7)";
+        ctx.fillText(`Pitch: ${gnssState.pitchDeg.toFixed(1)}°`, cx, cy + 48);
+      }
+    }
+
+    // --- CANVAS 3: SATELLITE SNR SPECTRUM BARS ---
+    function drawSNRChart() {
+      const ctx = snrCanvas.getContext("2d");
+      const w = snrCanvas.width, h = snrCanvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      const sats = Array.from(gnssState.satellites.values())
+        .sort((a, b) => b.snr - a.snr);
+
+      if (sats.length === 0) {
+        ctx.fillStyle = "rgba(148, 163, 184, 0.4)";
+        ctx.font = "12px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("Waiting for satellite telemetry (GSV)...", w / 2, h / 2);
+        return;
+      }
+
+      const paddingLeft = 35;
+      const paddingBottom = 30;
+      const chartW = w - paddingLeft - 20;
+      const chartH = h - paddingBottom - 15;
+      const maxDb = 50;
+
+      // Draw Y-axis grid lines (10, 20, 30, 40, 50 dB)
+      ctx.strokeStyle = "rgba(45, 62, 95, 0.35)";
+      ctx.lineWidth = 1;
+      ctx.font = "10px monospace";
+      ctx.fillStyle = "rgba(148, 163, 184, 0.6)";
+      ctx.textAlign = "right";
+
+      for (let db = 0; db <= maxDb; db += 10) {
+        const y = h - paddingBottom - (db / maxDb) * chartH;
+        ctx.beginPath();
+        ctx.moveTo(paddingLeft, y);
+        ctx.lineTo(w - 15, y);
+        ctx.stroke();
+        ctx.fillText(db, paddingLeft - 6, y + 3);
+      }
+
+      // Draw Bars
+      const barSpacing = chartW / sats.length;
+      const barWidth = Math.min(28, barSpacing * 0.75);
+
+      sats.forEach((sat, i) => {
+        const x = paddingLeft + i * barSpacing + (barSpacing - barWidth) / 2;
+        const barH = (Math.max(0, sat.snr) / maxDb) * chartH;
+        const y = h - paddingBottom - barH;
+
+        // Gradient based on SNR quality
+        const grad = ctx.createLinearGradient(0, y, 0, h - paddingBottom);
+        if (sat.snr >= 35) {
+          grad.addColorStop(0, "#10b981");
+          grad.addColorStop(1, "#059669");
+        } else if (sat.snr >= 25) {
+          grad.addColorStop(0, "#0ea5e9");
+          grad.addColorStop(1, "#0284c7");
+        } else {
+          grad.addColorStop(0, "#f59e0b");
+          grad.addColorStop(1, "#d97706");
+        }
+
+        ctx.fillStyle = grad;
+        ctx.fillRect(x, y, barWidth, barH);
+
+        // Sat PRN label & Sys badge
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "10px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText(sat.prn, x + barWidth / 2, h - paddingBottom + 14);
+
+        // Constellation code (G, B, E, R)
+        let sysChar = sat.sys[0];
+        ctx.fillStyle = sat.sys === "GPS" ? "#38bdf8" : (sat.sys === "BDS" ? "#f59e0b" : "#10b981");
+        ctx.font = "bold 8px sans-serif";
+        ctx.fillText(sysChar, x + barWidth / 2, h - paddingBottom + 24);
+
+        // SNR value on top of bar
+        if (sat.snr > 0) {
+          ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+          ctx.font = "9px monospace";
+          ctx.fillText(Math.round(sat.snr), x + barWidth / 2, y - 4);
+        }
+      });
+    }
+
+    // Clear Trails Button
+    document.getElementById("clearTrailsBtn")?.addEventListener("click", () => {
+      for (const sat of gnssState.satellites.values()) {
+        sat.trail = [];
+      }
+      drawSkyplot();
+      logTerminal("[INFO] Satellite orbital trails reset.", "sent");
+    });
+
+    // --- POSITION & TERMINAL PRIVACY BLUR ---
+    let privacyBlur = false;
+    const privacyBtn = document.getElementById("privacyBtn");
+    privacyBtn?.addEventListener("click", () => {
+      privacyBlur = !privacyBlur;
+      applyPrivacyBlur();
+    });
+
+    function applyPrivacyBlur() {
+      if (privacyBlur) {
+        valLat.classList.add("blurred-position");
+        valLon.classList.add("blurred-position");
+        terminal.classList.add("blurred-terminal");
+        if (privacyBtn) {
+          privacyBtn.textContent = "🔒 Privacy: Active";
+          privacyBtn.style.color = "#fca5a5";
+          privacyBtn.style.background = "rgba(239, 68, 68, 0.15)";
+          privacyBtn.style.borderColor = "rgba(239, 68, 68, 0.4)";
+        }
+      } else {
+        valLat.classList.remove("blurred-position");
+        valLon.classList.remove("blurred-position");
+        terminal.classList.remove("blurred-terminal");
+        if (privacyBtn) {
+          privacyBtn.textContent = "🔒 Privacy Mode";
+          privacyBtn.style.color = "var(--text-muted)";
+          privacyBtn.style.background = "rgba(255, 255, 255, 0.05)";
+          privacyBtn.style.borderColor = "var(--border)";
+        }
+      }
+    }
+
+    // --- DEMO MODE SIMULATION ---
+    let demoInterval = null;
+    function startDemoSimulation() {
+      if (keepReading) return;
+      const demoBtn = document.getElementById("demoBtn");
+      if (demoInterval) {
+        clearInterval(demoInterval);
+        demoInterval = null;
+        if (demoBtn) {
+          demoBtn.textContent = "Demo Mode";
+          demoBtn.style.background = "rgba(14, 165, 233, 0.15)";
+          demoBtn.style.borderColor = "rgba(14, 165, 233, 0.4)";
+        }
+        statusPill.classList.remove("connected");
+        statusText.textContent = "Disconnected";
+        return;
+      }
+
+      if (demoBtn) {
+        demoBtn.textContent = "Exit Demo";
+        demoBtn.style.background = "rgba(16, 185, 129, 0.25)";
+        demoBtn.style.borderColor = "#10b981";
+      }
+      statusPill.classList.add("connected");
+      statusText.textContent = "Demo: RTK FIXED";
+
+      gnssState.fixQuality = 4; // RTK FIXED
+      gnssState.lat = 0.00000000;
+      gnssState.lon = 0.00000000;
+      gnssState.altMsl = 0.00;
+      gnssState.geoidSep = 0.00;
+      gnssState.altEllipsoid = 0.00;
+      gnssState.hdop = 0.75;
+      gnssState.numSatsUsed = 24;
+      gnssState.speedKnots = 0.00;
+      gnssState.courseDeg = 0.0;
+      gnssState.utcTime = "12:00:00 UTC";
+      gnssState.utcDate = "2026-09-30";
+      gnssState.headingDeg = 197.4;
+      gnssState.pitchDeg = 2.1;
+      gnssState.headingStdDev = 0.18;
+      gnssState.baselineM = 0.85;
+      gnssState.headingStatus = "SOL_COMPUTED (NARROW_INT)";
+      gnssState.sigmaLat = 0.005;
+      gnssState.sigmaLon = 0.005;
+      gnssState.sigmaAlt = 0.010;
+      gnssState.hwVersion = "UM982 | R4.10Build25623 | HRPT00-S10C-P";
+      valHw.textContent = gnssState.hwVersion;
+
+      const now = Date.now();
+      const mockSats = [
+        { sys: "GPS", prn: "05", az: 48, elev: 68, snr: 43, deltaAz: -0.2, deltaEl: 0.1 },
+        { sys: "GPS", prn: "14", az: 122, elev: 52, snr: 40, deltaAz: -0.3, deltaEl: 0.15 },
+        { sys: "GPS", prn: "15", az: 215, elev: 76, snr: 45, deltaAz: 0.25, deltaEl: -0.1 },
+        { sys: "GPS", prn: "20", az: 288, elev: 38, snr: 36, deltaAz: 0.2, deltaEl: 0.1 },
+        { sys: "GPS", prn: "22", az: 162, elev: 28, snr: 33, deltaAz: -0.15, deltaEl: 0.2 },
+        { sys: "GPS", prn: "24", az: 332, elev: 44, snr: 38, deltaAz: 0.3, deltaEl: -0.1 },
+        { sys: "GPS", prn: "30", az: 82, elev: 22, snr: 30, deltaAz: -0.2, deltaEl: 0.1 },
+        { sys: "BDS", prn: "19", az: 142, elev: 64, snr: 42, deltaAz: -0.25, deltaEl: 0.12 },
+        { sys: "BDS", prn: "21", az: 98, elev: 50, snr: 39, deltaAz: -0.2, deltaEl: 0.15 },
+        { sys: "BDS", prn: "37", az: 242, elev: 46, snr: 41, deltaAz: 0.2, deltaEl: -0.1 },
+        { sys: "BDS", prn: "40", az: 312, elev: 58, snr: 42, deltaAz: 0.15, deltaEl: 0.1 },
+        { sys: "GAL", prn: "02", az: 178, elev: 72, snr: 46, deltaAz: -0.2, deltaEl: 0.08 },
+        { sys: "GAL", prn: "09", az: 272, elev: 55, snr: 41, deltaAz: 0.22, deltaEl: -0.15 },
+        { sys: "GAL", prn: "12", az: 36, elev: 34, snr: 35, deltaAz: -0.3, deltaEl: 0.2 },
+        { sys: "GLO", prn: "07", az: 192, elev: 48, snr: 37, deltaAz: -0.18, deltaEl: 0.14 },
+        { sys: "GLO", prn: "12", az: 318, elev: 27, snr: 32, deltaAz: 0.25, deltaEl: -0.18 }
+      ];
+
+      gnssState.satellites.clear();
+      mockSats.forEach(s => {
+        const trail = [];
+        for (let i = 12; i >= 1; i--) {
+          trail.push({
+            az: (s.az - i * s.deltaAz * 4 + 360) % 360,
+            elev: Math.max(5, Math.min(88, s.elev - i * s.deltaEl * 4)),
+            time: now - i * 4000
+          });
+        }
+        trail.push({ az: s.az, elev: s.elev, time: now });
+
+        gnssState.satellites.set(`${s.sys}_${s.prn}`, {
+          sys: s.sys,
+          prn: s.prn,
+          az: s.az,
+          elev: s.elev,
+          snr: s.snr,
+          updated: now,
+          trail: trail,
+          deltaAz: s.deltaAz,
+          deltaEl: s.deltaEl
+        });
+      });
+
+      terminal.innerHTML = "";
+
+      updateUI();
+      applyPrivacyBlur();
+
+      demoInterval = setInterval(() => {
+        const t = Date.now();
+        for (const sat of gnssState.satellites.values()) {
+          sat.az = (sat.az + sat.deltaAz * 0.15 + 360) % 360;
+          sat.elev = Math.max(8, Math.min(88, sat.elev + sat.deltaEl * 0.15));
+          sat.trail.push({ az: sat.az, elev: sat.elev, time: t });
+          if (sat.trail.length > 250) sat.trail.shift();
+        }
+        gnssState.headingDeg = (gnssState.headingDeg + (Math.random() - 0.5) * 0.15 + 360) % 360;
+        updateUI();
+      }, 1000);
+    }
+
+    document.getElementById("demoBtn")?.addEventListener("click", startDemoSimulation);
+
+    // Initial render
+    drawSkyplot();
+    drawCompass();
+    drawSNRChart();
+    applyPrivacyBlur();
+
+    if (new URLSearchParams(window.location.search).has("demo")) {
+      startDemoSimulation();
+    }
+  </script>
+</body>
+</html>
