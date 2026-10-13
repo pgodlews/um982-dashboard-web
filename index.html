@@ -453,7 +453,7 @@
       </div>
 
       <div class="metric-card">
-        <div class="metric-label">Satellites Tracked / Used</div>
+        <div class="metric-label">Satellites Used / Tracked</div>
         <div class="metric-val" id="satMetric">0 / 0</div>
         <div class="metric-sub" id="satMetricSub">GPS: 0 | BDS: 0 | GAL: 0 | GLO: 0</div>
       </div>
@@ -511,7 +511,7 @@
     <div class="card col-coords">
       <div class="card-title">
         <span>Geodetic Position</span>
-        <button id="privacyBtn" style="padding:0.18rem 0.55rem; font-size:0.7rem; background:rgba(255, 255, 255, 0.05); border-color:var(--border); color:var(--text-muted);">
+        <button id="privacyBtn" style="padding:0.18rem 0.55rem; font-size:0.7rem; background:rgba(255, 255, 255, 0.05); border-color:var(--card-border); color:var(--text-muted);">
           🔒 Privacy Mode
         </button>
       </div>
@@ -591,38 +591,54 @@
     let reader = null;
     let writer = null;
     let keepReading = false;
+    let disconnecting = false;
+    let readableStreamClosed = null;
+    let writableStreamClosed = null;
     let rawBuffer = "";
+    const MAX_RAW_BUFFER = 64 * 1024;
 
-    const gnssState = {
-      fixQuality: 0,
-      fixLabel: "NO FIX",
-      lat: null,
-      lon: null,
-      altMsl: null,
-      geoidSep: null,
-      altEllipsoid: null,
-      hdop: null,
-      numSatsUsed: 0,
-      speedKnots: 0,
-      courseDeg: 0,
-      utcTime: null,
-      utcDate: null,
-      headingDeg: null,
-      pitchDeg: null,
-      headingStdDev: null,
-      baselineM: null,
-      headingStatus: "NO_HEADING",
-      sigmaLat: null,
-      sigmaLon: null,
-      sigmaAlt: null,
-      hwVersion: null,
-      // Map of key: 'SYS_PRN' -> { sys, prn, elev, az, snr, updated }
-      satellites: new Map()
-    };
+    function defaultGnssState() {
+      return {
+        fixQuality: 0,
+        fixLabel: "NO FIX",
+        lat: null,
+        lon: null,
+        altMsl: null,
+        geoidSep: null,
+        altEllipsoid: null,
+        hdop: null,
+        numSatsUsed: 0,
+        speedKnots: 0,
+        courseDeg: 0,
+        utcTime: null,
+        utcDate: null,
+        headingDeg: null,
+        pitchDeg: null,
+        headingStdDev: null,
+        baselineM: null,
+        headingStatus: "NO_HEADING",
+        sigmaLat: null,
+        sigmaLon: null,
+        sigmaAlt: null,
+        hwVersion: null,
+        // Map of key: 'SYS_PRN' -> { sys, prn, elev, az, snr, signals, updated, trail }
+        satellites: new Map()
+      };
+    }
+
+    const gnssState = defaultGnssState();
+
+    function resetGnssState() {
+      Object.assign(gnssState, defaultGnssState());
+      valHw.textContent = "Unicore UM982";
+      utcMetric.textContent = "--:--:--";
+      dateMetric.textContent = "Waiting for GPS lock...";
+    }
 
     // --- DOM ELEMENTS ---
     const connectBtn = document.getElementById("connectBtn");
     const disconnectBtn = document.getElementById("disconnectBtn");
+    const demoBtn = document.getElementById("demoBtn");
     const baudSelect = document.getElementById("baudSelect");
     const statusPill = document.getElementById("statusPill");
     const statusText = document.getElementById("statusText");
@@ -658,36 +674,50 @@
     const snrCanvas = document.getElementById("snrCanvas");
 
     // Check Web Serial API support
-    if (!("serial" in navigator)) {
-      alert("Web Serial API is not supported in this browser. Please open this page in Google Chrome (version 89+) or Microsoft Edge.");
+    const serialSupported = "serial" in navigator;
+    if (!serialSupported) {
       connectBtn.disabled = true;
+      connectBtn.title = "Web Serial API is not supported in this browser";
+      logTerminal("[WARN] Web Serial API is not supported in this browser. Use Google Chrome (89+) or Microsoft Edge to connect a receiver. Demo Mode is still available.", "err");
     }
 
     // --- SERIAL CONNECTION ---
     connectBtn.addEventListener("click", async () => {
+      let newPort = null;
       try {
-        port = await navigator.serial.requestPort();
+        newPort = await navigator.serial.requestPort();
         const baudRate = parseInt(baudSelect.value, 10);
-        await port.open({ baudRate });
+        await newPort.open({ baudRate });
 
+        // Live data replaces any demo / previous-session state
+        stopDemoSimulation();
+        resetGnssState();
+        rawBuffer = "";
+        scheduleUI();
+
+        port = newPort;
         keepReading = true;
         connectBtn.disabled = true;
         baudSelect.disabled = true;
         disconnectBtn.disabled = false;
         sendCmdBtn.disabled = false;
+        demoBtn.disabled = true;
         statusPill.classList.add("connected");
         statusText.textContent = `Connected (${baudRate} baud)`;
 
         logTerminal(`[INFO] Port opened successfully at ${baudRate} baud 8N1`, "ok");
 
         const textEncoder = new TextEncoderStream();
-        const writableStreamClosed = textEncoder.readable.pipeTo(port.writable);
+        writableStreamClosed = textEncoder.readable.pipeTo(port.writable).catch(() => {});
         writer = textEncoder.writable.getWriter();
 
         readSerialLoop();
       } catch (err) {
         console.error(err);
         logTerminal(`[ERROR] Connection failed: ${err.message}`, "err");
+        if (newPort && newPort !== port) {
+          try { await newPort.close(); } catch (e) {}
+        }
       }
     });
 
@@ -696,53 +726,85 @@
     });
 
     async function disconnectSerial() {
+      if (disconnecting) return;
+      disconnecting = true;
+      disconnectBtn.disabled = true;
       keepReading = false;
+
+      // Streams must be fully unlocked before port.close() will succeed
       if (reader) {
         try { await reader.cancel(); } catch (e) {}
       }
+      if (readableStreamClosed) await readableStreamClosed;
       if (writer) {
         try { await writer.close(); } catch (e) {}
       }
+      if (writableStreamClosed) await writableStreamClosed;
       if (port) {
-        try { await port.close(); } catch (e) {}
+        try {
+          await port.close();
+        } catch (e) {
+          logTerminal(`[ERROR] Failed to close port: ${e.message}`, "err");
+        }
       }
       port = null;
       reader = null;
       writer = null;
+      readableStreamClosed = null;
+      writableStreamClosed = null;
+      rawBuffer = "";
 
-      connectBtn.disabled = false;
+      connectBtn.disabled = !serialSupported;
       baudSelect.disabled = false;
       disconnectBtn.disabled = true;
       sendCmdBtn.disabled = true;
+      demoBtn.disabled = false;
       statusPill.classList.remove("connected");
       statusText.textContent = "Disconnected";
       logTerminal("[INFO] Serial connection closed.", "sent");
+      disconnecting = false;
     }
 
     async function readSerialLoop() {
-      const textDecoder = new TextDecoderStream();
-      const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
-      reader = textDecoder.readable.getReader();
+      // Non-fatal errors (framing, overrun, break) replace port.readable with a
+      // fresh stream; fatal errors (e.g. device unplugged) set it to null.
+      while (keepReading && port && port.readable) {
+        const textDecoder = new TextDecoderStream();
+        readableStreamClosed = port.readable.pipeTo(textDecoder.writable).catch(() => {});
+        const streamReader = textDecoder.readable.getReader();
+        reader = streamReader;
 
-      try {
-        while (keepReading) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          if (value) {
-            handleRawSerialData(value);
+        try {
+          while (true) {
+            const { value, done } = await streamReader.read();
+            if (done) break;
+            if (value) {
+              handleRawSerialData(value);
+            }
           }
+        } catch (err) {
+          if (keepReading) {
+            logTerminal(`[ERROR] Read error: ${err.message}`, "err");
+          }
+        } finally {
+          streamReader.releaseLock();
         }
-      } catch (err) {
-        if (keepReading) {
-          logTerminal(`[ERROR] Read error: ${err.message}`, "err");
-        }
-      } finally {
-        reader.releaseLock();
+        await readableStreamClosed;
+      }
+
+      if (keepReading) {
+        logTerminal("[ERROR] Serial device lost.", "err");
+        await disconnectSerial();
       }
     }
 
     function handleRawSerialData(chunk) {
       rawBuffer += chunk;
+      if (rawBuffer.length > MAX_RAW_BUFFER && rawBuffer.indexOf("\n") < 0) {
+        // No line terminator in a long stream of data (wrong baud / binary output)
+        rawBuffer = "";
+        return;
+      }
       let newlineIdx;
       while ((newlineIdx = rawBuffer.indexOf("\n")) >= 0) {
         const line = rawBuffer.slice(0, newlineIdx).trim();
@@ -771,7 +833,10 @@
 
     // Send Commands
     async function sendCommand(cmd) {
-      if (!writer) return;
+      if (!writer) {
+        logTerminal("[WARN] Not connected. Connect a serial port first.", "err");
+        return;
+      }
       try {
         const cleanCmd = cmd.trim();
         await writer.write(cleanCmd + "\r\n");
@@ -802,13 +867,22 @@
     });
 
     // --- NMEA & UNICORE PARSER ---
+    // Returns true when the NMEA XOR checksum matches (or no checksum is present).
+    function nmeaChecksumOk(line) {
+      const starIdx = line.lastIndexOf("*");
+      if (starIdx < 0) return true;
+      const expected = parseInt(line.slice(starIdx + 1, starIdx + 3), 16);
+      if (isNaN(expected)) return false;
+      let sum = 0;
+      for (let i = 1; i < starIdx; i++) {
+        sum ^= line.charCodeAt(i);
+      }
+      return sum === expected;
+    }
+
     function parseSentence(line) {
-      // Checksum validation & logging
       if (line.startsWith("$command,") || line.startsWith("$CONFIG,")) {
         logTerminal(line, "ok");
-        if (line.includes("response: OK")) {
-          // command success
-        }
         return;
       }
 
@@ -816,7 +890,7 @@
         logTerminal(line, "ok");
         const parts = line.split(";")[1];
         if (parts) {
-          gnssState.hwVersion = parts.replace(/"/g, "").split(",").slice(0, 3).join(" | ");
+          gnssState.hwVersion = parts.replace(/"/g, "").split("*")[0].split(",").slice(0, 3).join(" | ");
           valHw.textContent = gnssState.hwVersion;
         }
         return;
@@ -834,6 +908,11 @@
       }
 
       if (!line.startsWith("$")) return;
+
+      if (!nmeaChecksumOk(line)) {
+        logTerminal(`[WARN] Checksum mismatch, dropped: ${line}`, "err");
+        return;
+      }
 
       const starIdx = line.indexOf("*");
       const body = (starIdx >= 0) ? line.slice(1, starIdx) : line.slice(1);
@@ -872,13 +951,16 @@
       gnssState.hdop = isNaN(hdop) ? null : hdop;
       gnssState.altMsl = isNaN(alt) ? null : alt;
       gnssState.geoidSep = isNaN(geoid) ? null : geoid;
-      if (gnssState.altMsl !== null && gnssState.geoidSep !== null) {
-        gnssState.altEllipsoid = gnssState.altMsl + gnssState.geoidSep;
-      }
+      gnssState.altEllipsoid = (gnssState.altMsl !== null && gnssState.geoidSep !== null)
+        ? gnssState.altMsl + gnssState.geoidSep
+        : null;
 
-      if (latStr && lonStr) {
-        gnssState.lat = parseNmeaCoord(latStr, latDir, 2);
-        gnssState.lon = parseNmeaCoord(lonStr, lonDir, 3);
+      // Empty position fields mean the fix was lost: don't keep showing the old one
+      gnssState.lat = parseNmeaCoord(latStr, latDir, 2);
+      gnssState.lon = parseNmeaCoord(lonStr, lonDir, 3);
+      if (gnssState.lat === null || gnssState.lon === null) {
+        gnssState.lat = null;
+        gnssState.lon = null;
       }
 
       if (utc && utc.length >= 6) {
@@ -886,12 +968,11 @@
         gnssState.utcTime = `${hh}:${mm}:${ss} UTC`;
       }
 
-      updateUI();
+      scheduleUI();
     }
 
     function parseRMC(p) {
       if (p.length < 10) return;
-      const status = p[2];
       const spd = parseFloat(p[7]);
       const crs = parseFloat(p[8]);
       const dateStr = p[9];
@@ -904,7 +985,7 @@
         gnssState.utcDate = `20${yy}-${mm}-${dd}`;
       }
 
-      updateUI();
+      scheduleUI();
     }
 
     function parseGST(p) {
@@ -915,19 +996,25 @@
       gnssState.sigmaLat = isNaN(sLat) ? null : sLat;
       gnssState.sigmaLon = isNaN(sLon) ? null : sLon;
       gnssState.sigmaAlt = isNaN(sAlt) ? null : sAlt;
-      updateUI();
+      scheduleUI();
     }
 
+    const GSV_TALKER_SYS = { GP: "GPS", GB: "BDS", BD: "BDS", GA: "GAL", GL: "GLO", GQ: "QZS", GI: "IRN" };
+    const SIGNAL_STALE_MS = 5000;
+
     function parseGSV(p) {
-      // $GxGSV,total,msg_num,total_sats,prn,elev,az,snr,...
+      // $GxGSV,total,msg_num,total_sats,{prn,elev,az,snr}x(1..4)[,signal_id]
       const talker = p[0].slice(0, 2);
-      let sys = "GPS";
-      if (talker === "GB" || talker === "BD") sys = "BDS";
-      else if (talker === "GA") sys = "GAL";
-      else if (talker === "GL") sys = "GLO";
+      const sys = GSV_TALKER_SYS[talker] || talker;
+
+      // NMEA 4.10+ appends a signal ID; receivers like the UM982 then send one
+      // GSV set per signal band, each with its own C/N0 for the same satellite.
+      const hasSignalId = (p.length - 4) % 4 === 1;
+      const signalId = hasSignalId ? (p[p.length - 1] || "0") : "0";
+      const end = hasSignalId ? p.length - 1 : p.length;
 
       const now = Date.now();
-      for (let i = 4; i < p.length - 3; i += 4) {
+      for (let i = 4; i + 3 < end; i += 4) {
         const prn = p[i];
         const elev = parseFloat(p[i + 1]);
         const az = parseFloat(p[i + 2]);
@@ -944,7 +1031,8 @@
               prn,
               elev: validElev ? elev : 0,
               az: validAz ? az : 0,
-              snr: isNaN(snr) ? 0 : snr,
+              snr: 0,
+              signals: {},
               updated: now,
               trail: []
             };
@@ -953,11 +1041,8 @@
             }
             gnssState.satellites.set(key, satRecord);
           } else {
-            satRecord.sys = sys;
-            satRecord.prn = prn;
             if (validElev) satRecord.elev = elev;
             if (validAz) satRecord.az = az;
-            satRecord.snr = isNaN(snr) ? 0 : snr;
             satRecord.updated = now;
             if (!satRecord.trail) satRecord.trail = [];
 
@@ -972,6 +1057,19 @@
               }
             }
           }
+
+          // Display the strongest recently-reported signal for this satellite
+          if (!satRecord.signals) satRecord.signals = {};
+          satRecord.signals[signalId] = { snr: isNaN(snr) ? 0 : snr, time: now };
+          let best = 0;
+          for (const [sig, s] of Object.entries(satRecord.signals)) {
+            if (now - s.time > SIGNAL_STALE_MS) {
+              delete satRecord.signals[sig];
+            } else if (s.snr > best) {
+              best = s.snr;
+            }
+          }
+          satRecord.snr = best;
         }
       }
 
@@ -981,11 +1079,11 @@
           gnssState.satellites.delete(k);
         }
       }
-      updateUI();
+      scheduleUI();
     }
 
     function parseHeading(line) {
-      // #HEADINGA,header;sol_status,pos_type,length,heading,pitch,...
+      // #HEADINGA,header;sol_status,pos_type,length,heading,pitch,reserved,hdg_std,ptch_std,...
       const starIdx = line.indexOf("*");
       const clean = starIdx >= 0 ? line.slice(0, starIdx) : line;
       const parts = clean.split(";");
@@ -999,11 +1097,13 @@
         const ptch = parseFloat(data[4]);
         const hdgStd = parseFloat(data[6]);
 
-        gnssState.baselineM = isNaN(len) ? null : len;
-        gnssState.headingDeg = isNaN(hdg) ? null : hdg;
-        gnssState.pitchDeg = isNaN(ptch) ? null : ptch;
-        gnssState.headingStdDev = isNaN(hdgStd) ? null : hdgStd;
-        updateUI();
+        // Heading/pitch fields are placeholders (usually 0) unless a solution exists
+        const solved = data[0] === "SOL_COMPUTED";
+        gnssState.baselineM = solved && !isNaN(len) ? len : null;
+        gnssState.headingDeg = solved && !isNaN(hdg) ? hdg : null;
+        gnssState.pitchDeg = solved && !isNaN(ptch) ? ptch : null;
+        gnssState.headingStdDev = solved && !isNaN(hdgStd) ? hdgStd : null;
+        scheduleUI();
       }
     }
 
@@ -1022,10 +1122,30 @@
       0: { name: "NO FIX", cls: "fix-none", sub: "Searching satellites..." },
       1: { name: "STANDALONE 3D", cls: "fix-single", sub: "Autonomous Single Point" },
       2: { name: "DGPS", cls: "fix-dgps", sub: "Differential GPS" },
+      3: { name: "PPS", cls: "fix-single", sub: "Precise Positioning Service" },
       4: { name: "RTK FIXED", cls: "fix-rtk", sub: "Carrier Phase Integer Fix (~1cm)" },
       5: { name: "RTK FLOAT", cls: "fix-float", sub: "Carrier Phase Float Solution" },
-      6: { name: "DEAD RECKONING", cls: "fix-single", sub: "Inertial Integration" }
+      6: { name: "DEAD RECKONING", cls: "fix-single", sub: "Inertial Integration" },
+      7: { name: "MANUAL INPUT", cls: "fix-single", sub: "Fixed Position Entered by User" },
+      8: { name: "SIMULATION", cls: "fix-none", sub: "Simulator Mode" }
     };
+
+    const SYS_COLORS = { GPS: "#38bdf8", BDS: "#f59e0b", GAL: "#10b981", GLO: "#ef4444", QZS: "#a78bfa", IRN: "#f472b6" };
+    const SYS_CHARS = { GPS: "G", BDS: "B", GAL: "E", GLO: "R", QZS: "J", IRN: "I" };
+    function sysColor(sys) {
+      return SYS_COLORS[sys] || "#94a3b8";
+    }
+
+    // Coalesce bursts of sentences (GSV sets, 5-20 Hz logs) into one redraw per frame
+    let uiFramePending = false;
+    function scheduleUI() {
+      if (uiFramePending) return;
+      uiFramePending = true;
+      requestAnimationFrame(() => {
+        uiFramePending = false;
+        updateUI();
+      });
+    }
 
     function updateUI() {
       // 1. Fix badge
@@ -1052,6 +1172,7 @@
       } else {
         headingMetric.textContent = "---°";
         headingMetricSub.textContent = gnssState.headingStatus;
+        headingPill.textContent = "Baseline: --- m";
       }
 
       // 4. Precision
@@ -1064,12 +1185,12 @@
       }
 
       // 5. Time
-      if (gnssState.utcTime) utcMetric.textContent = gnssState.utcTime;
-      if (gnssState.utcDate) dateMetric.textContent = gnssState.utcDate;
+      utcMetric.textContent = gnssState.utcTime || "--:--:--";
+      dateMetric.textContent = gnssState.utcDate || "Waiting for GPS lock...";
 
       // 6. Coordinates
       if (gnssState.lat !== null && gnssState.lon !== null) {
-        valLat.textContent = `${gnssState.lat.toFixed(8)}° ${gnssState.lat >= 0 ? "N" : "S"}`;
+        valLat.textContent = `${Math.abs(gnssState.lat).toFixed(8)}° ${gnssState.lat >= 0 ? "N" : "S"}`;
         valLon.textContent = `${Math.abs(gnssState.lon).toFixed(8)}° ${gnssState.lon >= 0 ? "E" : "W"}`;
         mapsBtn.disabled = false;
         copyPosBtn.disabled = false;
@@ -1096,16 +1217,22 @@
     // Maps & Clipboard
     mapsBtn.addEventListener("click", () => {
       if (gnssState.lat !== null && gnssState.lon !== null) {
-        window.open(`https://www.google.com/maps?q=${gnssState.lat},${gnssState.lon}`, "_blank");
+        window.open(`https://www.google.com/maps?q=${gnssState.lat},${gnssState.lon}`, "_blank", "noopener");
       }
     });
 
     copyPosBtn.addEventListener("click", () => {
       if (gnssState.lat !== null && gnssState.lon !== null) {
         const text = `${gnssState.lat.toFixed(8)}, ${gnssState.lon.toFixed(8)}`;
-        navigator.clipboard.writeText(text);
-        copyPosBtn.textContent = "Copied!";
-        setTimeout(() => { copyPosBtn.textContent = "Copy Coords"; }, 1500);
+        navigator.clipboard.writeText(text).then(
+          () => { copyPosBtn.textContent = "Copied!"; },
+          (err) => {
+            copyPosBtn.textContent = "Copy Failed";
+            logTerminal(`[ERROR] Clipboard write failed: ${err.message}`, "err");
+          }
+        ).finally(() => {
+          setTimeout(() => { copyPosBtn.textContent = "Copy Coords"; }, 1500);
+        });
       }
     });
 
@@ -1130,6 +1257,8 @@
 
         ctx.fillStyle = "rgba(148, 163, 184, 0.5)";
         ctx.font = "9px monospace";
+        ctx.textAlign = "start";
+        ctx.textBaseline = "alphabetic";
         ctx.fillText(`${elev}°`, cx + 3, cy - ringR + 10);
       });
 
@@ -1157,10 +1286,7 @@
       sats.forEach(sat => {
         if (!sat.trail || sat.trail.length < 2) return;
 
-        let color = "#38bdf8";
-        if (sat.sys === "BDS") color = "#f59e0b";
-        else if (sat.sys === "GAL") color = "#10b981";
-        else if (sat.sys === "GLO") color = "#ef4444";
+        const color = sysColor(sat.sys);
 
         ctx.save();
         ctx.strokeStyle = color;
@@ -1217,10 +1343,7 @@
         const y = cy + dist * Math.sin(azRad);
 
         // Color by Constellation
-        let color = "#38bdf8";
-        if (sat.sys === "BDS") color = "#f59e0b";
-        else if (sat.sys === "GAL") color = "#10b981";
-        else if (sat.sys === "GLO") color = "#ef4444";
+        const color = sysColor(sat.sys);
 
         // Glow halo if strong SNR
         if (sat.snr > 30) {
@@ -1400,9 +1523,9 @@
         ctx.textAlign = "center";
         ctx.fillText(sat.prn, x + barWidth / 2, h - paddingBottom + 14);
 
-        // Constellation code (G, B, E, R)
-        let sysChar = sat.sys[0];
-        ctx.fillStyle = sat.sys === "GPS" ? "#38bdf8" : (sat.sys === "BDS" ? "#f59e0b" : "#10b981");
+        // Constellation code (G, B, E, R, J, I)
+        const sysChar = SYS_CHARS[sat.sys] || sat.sys[0];
+        ctx.fillStyle = sysColor(sat.sys);
         ctx.font = "bold 8px sans-serif";
         ctx.fillText(sysChar, x + barWidth / 2, h - paddingBottom + 24);
 
@@ -1451,34 +1574,40 @@
           privacyBtn.textContent = "🔒 Privacy Mode";
           privacyBtn.style.color = "var(--text-muted)";
           privacyBtn.style.background = "rgba(255, 255, 255, 0.05)";
-          privacyBtn.style.borderColor = "var(--border)";
+          privacyBtn.style.borderColor = "var(--card-border)";
         }
       }
     }
 
     // --- DEMO MODE SIMULATION ---
     let demoInterval = null;
-    function startDemoSimulation() {
-      if (keepReading) return;
-      const demoBtn = document.getElementById("demoBtn");
-      if (demoInterval) {
-        clearInterval(demoInterval);
-        demoInterval = null;
-        if (demoBtn) {
-          demoBtn.textContent = "Demo Mode";
-          demoBtn.style.background = "rgba(14, 165, 233, 0.15)";
-          demoBtn.style.borderColor = "rgba(14, 165, 233, 0.4)";
-        }
-        statusPill.classList.remove("connected");
-        statusText.textContent = "Disconnected";
-        return;
-      }
 
-      if (demoBtn) {
-        demoBtn.textContent = "Exit Demo";
-        demoBtn.style.background = "rgba(16, 185, 129, 0.25)";
-        demoBtn.style.borderColor = "#10b981";
-      }
+    // Stops the simulation and clears its fake telemetry. Returns true if a demo was running.
+    function stopDemoSimulation() {
+      if (!demoInterval) return false;
+      clearInterval(demoInterval);
+      demoInterval = null;
+      demoBtn.textContent = "Demo Mode";
+      demoBtn.style.background = "rgba(14, 165, 233, 0.15)";
+      demoBtn.style.borderColor = "rgba(14, 165, 233, 0.4)";
+      statusPill.classList.remove("connected");
+      statusText.textContent = "Disconnected";
+      resetGnssState();
+      updateUI();
+      return true;
+    }
+
+    function toggleDemoSimulation() {
+      if (stopDemoSimulation()) return;
+      startDemoSimulation();
+    }
+
+    function startDemoSimulation() {
+      if (keepReading || demoInterval) return;
+
+      demoBtn.textContent = "Exit Demo";
+      demoBtn.style.background = "rgba(16, 185, 129, 0.25)";
+      demoBtn.style.borderColor = "#10b981";
       statusPill.classList.add("connected");
       statusText.textContent = "Demo: RTK FIXED";
 
@@ -1550,8 +1679,6 @@
         });
       });
 
-      terminal.innerHTML = "";
-
       updateUI();
       applyPrivacyBlur();
 
@@ -1568,7 +1695,7 @@
       }, 1000);
     }
 
-    document.getElementById("demoBtn")?.addEventListener("click", startDemoSimulation);
+    demoBtn.addEventListener("click", toggleDemoSimulation);
 
     // Initial render
     drawSkyplot();
