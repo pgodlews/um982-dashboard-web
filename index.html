@@ -308,10 +308,11 @@
       align-items: center;
       justify-content: center;
     }
+    /* The backing store is sized to this box (x devicePixelRatio) in prepareCanvas() */
     canvas {
       display: block;
-      max-width: 100%;
-      max-height: 100%;
+      width: 100%;
+      height: 100%;
     }
 
     /* Satellite Spectrum Bars */
@@ -370,7 +371,6 @@
 
     /* Terminal Console */
     .terminal-box {
-      flex: 1;
       background: #050810;
       border: 1px solid rgba(45, 62, 95, 0.6);
       border-radius: 8px;
@@ -379,13 +379,16 @@
       font-size: 0.72rem;
       color: #38bdf8;
       overflow-y: auto;
-      height: 200px;
+      /* A definite flex-basis: "flex: 1" (basis 0%) resolves to the content height
+         in an auto-height card, so the box grew with every logged line. */
+      flex: 1 1 200px;
+      min-height: 0;
       display: flex;
       flex-direction: column;
       gap: 0.2rem;
       line-height: 1.4;
     }
-    .terminal-line { word-break: break-all; }
+    .terminal-line { word-break: break-all; flex-shrink: 0; }
     .terminal-line.sent { color: #f59e0b; }
     .terminal-line.err { color: #ef4444; }
     .terminal-line.ok { color: #10b981; }
@@ -558,7 +561,7 @@
     <div class="card col-satellites">
       <div class="card-title">
         <span>Satellite Signal Strength (C/N0 dB-Hz)</span>
-        <span id="activeSatsCount" style="font-size:0.75rem; color:var(--accent)">0 Satellites Active</span>
+        <span id="activeSatsCount" style="font-size:0.75rem; color:var(--accent)">0 Satellites Tracked</span>
       </div>
       <div class="canvas-container" style="height: 240px;">
         <canvas id="snrCanvas" width="800" height="240"></canvas>
@@ -684,6 +687,8 @@
     // --- SERIAL CONNECTION ---
     connectBtn.addEventListener("click", async () => {
       let newPort = null;
+      // Block re-entry while the chooser / open() is pending
+      connectBtn.disabled = true;
       try {
         newPort = await navigator.serial.requestPort();
         const baudRate = parseInt(baudSelect.value, 10);
@@ -713,11 +718,16 @@
 
         readSerialLoop();
       } catch (err) {
-        console.error(err);
-        logTerminal(`[ERROR] Connection failed: ${err.message}`, "err");
+        // Dismissing the port chooser rejects with NotFoundError; that is not a failure
+        if (newPort || err.name !== "NotFoundError") {
+          console.error(err);
+          logTerminal(`[ERROR] Connection failed: ${err.message}`, "err");
+        }
         if (newPort && newPort !== port) {
           try { await newPort.close(); } catch (e) {}
         }
+      } finally {
+        if (!port) connectBtn.disabled = !serialSupported;
       }
     });
 
@@ -820,11 +830,13 @@
       const div = document.createElement("div");
       div.className = `terminal-line ${type}`;
       div.textContent = msg;
+      // Follow the tail only if the user hasn't scrolled up to read earlier output
+      const atBottom = terminal.scrollHeight - terminal.scrollTop - terminal.clientHeight < 24;
       terminal.appendChild(div);
       if (terminal.childNodes.length > 200) {
         terminal.removeChild(terminal.firstChild);
       }
-      terminal.scrollTop = terminal.scrollHeight;
+      if (atBottom) terminal.scrollTop = terminal.scrollHeight;
     }
 
     clearTermBtn.addEventListener("click", () => {
@@ -1127,7 +1139,8 @@
       5: { name: "RTK FLOAT", cls: "fix-float", sub: "Carrier Phase Float Solution" },
       6: { name: "DEAD RECKONING", cls: "fix-single", sub: "Inertial Integration" },
       7: { name: "MANUAL INPUT", cls: "fix-single", sub: "Fixed Position Entered by User" },
-      8: { name: "SIMULATION", cls: "fix-none", sub: "Simulator Mode" }
+      8: { name: "SIMULATION", cls: "fix-none", sub: "Simulator Mode" },
+      9: { name: "SBAS", cls: "fix-dgps", sub: "Satellite-Based Augmentation" }
     };
 
     const SYS_COLORS = { GPS: "#38bdf8", BDS: "#f59e0b", GAL: "#10b981", GLO: "#ef4444", QZS: "#a78bfa", IRN: "#f472b6" };
@@ -1149,7 +1162,9 @@
 
     function updateUI() {
       // 1. Fix badge
-      const fixInfo = FIX_LABELS[gnssState.fixQuality] || FIX_LABELS[0];
+      // An unrecognised non-zero quality code is still a fix, not "NO FIX"
+      const fixInfo = FIX_LABELS[gnssState.fixQuality] ||
+        { name: `FIX (Q${gnssState.fixQuality})`, cls: "fix-single", sub: "Unrecognised GGA quality code" };
       fixBadge.className = `fix-badge ${fixInfo.cls}`;
       fixBadge.textContent = fixInfo.name;
       fixSub.textContent = fixInfo.sub;
@@ -1209,9 +1224,7 @@
       valSpeedCourse.textContent = `${gnssState.speedKnots.toFixed(1)} kn (${spdKmh} km/h) / ${gnssState.courseDeg.toFixed(1)}°`;
 
       // Render Visualizations
-      drawSkyplot();
-      drawCompass();
-      drawSNRChart();
+      drawCharts();
     }
 
     // Maps & Clipboard
@@ -1224,7 +1237,11 @@
     copyPosBtn.addEventListener("click", () => {
       if (gnssState.lat !== null && gnssState.lon !== null) {
         const text = `${gnssState.lat.toFixed(8)}, ${gnssState.lon.toFixed(8)}`;
-        navigator.clipboard.writeText(text).then(
+        // navigator.clipboard only exists in secure contexts (HTTPS, localhost, file://)
+        const written = navigator.clipboard
+          ? navigator.clipboard.writeText(text)
+          : Promise.reject(new Error("Clipboard API requires HTTPS or localhost"));
+        written.then(
           () => { copyPosBtn.textContent = "Copied!"; },
           (err) => {
             copyPosBtn.textContent = "Copy Failed";
@@ -1236,14 +1253,35 @@
       }
     });
 
+    // Sizes a canvas' backing store to its CSS box x devicePixelRatio, clears it and
+    // returns the logical (CSS pixel) drawing size. Keeps charts sharp on HiDPI
+    // screens and text at a readable size when the layout narrows.
+    function prepareCanvas(canvas) {
+      const dpr = window.devicePixelRatio || 1;
+      const w = Math.max(1, canvas.clientWidth);
+      const h = Math.max(1, canvas.clientHeight);
+      const bw = Math.round(w * dpr), bh = Math.round(h * dpr);
+      if (canvas.width !== bw || canvas.height !== bh) {
+        canvas.width = bw;
+        canvas.height = bh;
+      }
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      return { ctx, w, h };
+    }
+
+    function drawCharts() {
+      drawSkyplot();
+      drawCompass();
+      drawSNRChart();
+    }
+
     // --- CANVAS 1: POLAR SKYPLOT ---
     function drawSkyplot() {
-      const ctx = skyplotCanvas.getContext("2d");
-      const w = skyplotCanvas.width, h = skyplotCanvas.height;
+      const { ctx, w, h } = prepareCanvas(skyplotCanvas);
       const cx = w / 2, cy = h / 2;
-      const r = Math.min(cx, cy) - 24;
-
-      ctx.clearRect(0, 0, w, h);
+      const r = Math.max(10, Math.min(cx, cy) - 24);
 
       // Rings for 0°, 30°, 60° elevation
       const rings = [0, 30, 60];
@@ -1374,12 +1412,9 @@
 
     // --- CANVAS 2: ATTITUDE & HEADING COMPASS ---
     function drawCompass() {
-      const ctx = compassCanvas.getContext("2d");
-      const w = compassCanvas.width, h = compassCanvas.height;
+      const { ctx, w, h } = prepareCanvas(compassCanvas);
       const cx = w / 2, cy = h / 2;
-      const r = Math.min(cx, cy) - 26;
-
-      ctx.clearRect(0, 0, w, h);
+      const r = Math.max(10, Math.min(cx, cy) - 26);
 
       // Outer bezel ring
       ctx.strokeStyle = "rgba(45, 62, 95, 0.7)";
@@ -1411,6 +1446,8 @@
       ctx.save();
       ctx.translate(cx, cy);
       ctx.rotate(hdgRad + Math.PI / 2);
+      // Without a heading solution the needle is only a placeholder: dim it
+      if (gnssState.headingDeg === null) ctx.globalAlpha = 0.25;
 
       // North Needle (Cyan/Accent)
       ctx.fillStyle = "#0ea5e9";
@@ -1438,12 +1475,24 @@
 
       ctx.restore();
 
-      // Digital readout in center
-      ctx.fillStyle = gnssState.headingDeg !== null ? "#38bdf8" : "#64748b";
+      // Digital readout in center, on a backing plate so the needle (which sweeps
+      // through this spot for headings near 180°) can't hide the text
+      const readout = gnssState.headingDeg !== null ? `${heading.toFixed(1)}°` : "NO HEADING";
       ctx.font = "bold 16px sans-serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(gnssState.headingDeg !== null ? `${heading.toFixed(1)}°` : "NO HEADING", cx, cy + 32);
+      const plateW = Math.max(ctx.measureText(readout).width + 18, 92);
+      const plateH = gnssState.pitchDeg !== null ? 40 : 24;
+      ctx.fillStyle = "rgba(9, 13, 22, 0.88)";
+      ctx.strokeStyle = "rgba(45, 62, 95, 0.7)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.rect(cx - plateW / 2, cy + 20, plateW, plateH);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = gnssState.headingDeg !== null ? "#38bdf8" : "#64748b";
+      ctx.fillText(readout, cx, cy + 32);
 
       // Pitch indicator if available
       if (gnssState.pitchDeg !== null) {
@@ -1455,9 +1504,7 @@
 
     // --- CANVAS 3: SATELLITE SNR SPECTRUM BARS ---
     function drawSNRChart() {
-      const ctx = snrCanvas.getContext("2d");
-      const w = snrCanvas.width, h = snrCanvas.height;
-      ctx.clearRect(0, 0, w, h);
+      const { ctx, w, h } = prepareCanvas(snrCanvas);
 
       const sats = Array.from(gnssState.satellites.values())
         .sort((a, b) => b.snr - a.snr);
@@ -1495,6 +1542,8 @@
       // Draw Bars
       const barSpacing = chartW / sats.length;
       const barWidth = Math.min(28, barSpacing * 0.75);
+      // When bars are packed tighter than a label is wide, label every Nth bar
+      const labelEvery = Math.max(1, Math.ceil(14 / barSpacing));
 
       sats.forEach((sat, i) => {
         const x = paddingLeft + i * barSpacing + (barSpacing - barWidth) / 2;
@@ -1516,6 +1565,7 @@
 
         ctx.fillStyle = grad;
         ctx.fillRect(x, y, barWidth, barH);
+        if (i % labelEvery !== 0) return;
 
         // Sat PRN label & Sys badge
         ctx.fillStyle = "#ffffff";
@@ -1686,7 +1736,13 @@
         const t = Date.now();
         for (const sat of gnssState.satellites.values()) {
           sat.az = (sat.az + sat.deltaAz * 0.15 + 360) % 360;
-          sat.elev = Math.max(8, Math.min(88, sat.elev + sat.deltaEl * 0.15));
+          sat.elev += sat.deltaEl * 0.15;
+          // Turn around at the limits; clamping alone eventually parks every
+          // satellite at the zenith or the horizon ring
+          if (sat.elev > 88 || sat.elev < 8) {
+            sat.deltaEl = -sat.deltaEl;
+            sat.elev = Math.max(8, Math.min(88, sat.elev));
+          }
           sat.trail.push({ az: sat.az, elev: sat.elev, time: t });
           if (sat.trail.length > 250) sat.trail.shift();
         }
@@ -1697,10 +1753,14 @@
 
     demoBtn.addEventListener("click", toggleDemoSimulation);
 
-    // Initial render
-    drawSkyplot();
-    drawCompass();
-    drawSNRChart();
+    // Initial render, and redraw whenever the layout resizes a canvas
+    drawCharts();
+    if ("ResizeObserver" in window) {
+      const canvasResizeObserver = new ResizeObserver(drawCharts);
+      [skyplotCanvas, compassCanvas, snrCanvas].forEach(c => canvasResizeObserver.observe(c));
+    } else {
+      window.addEventListener("resize", drawCharts);
+    }
     applyPrivacyBlur();
 
     if (new URLSearchParams(window.location.search).has("demo")) {
